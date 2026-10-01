@@ -18,8 +18,24 @@ pub const KNOWN_KEYS: &[&str] = &[
     "calcom-api-key",
 ];
 
+/// Provider credentials are namespaced: `provider-<id>-key` for API keys and
+/// `provider-<id>-oauth` for the token bundle. Only declared provider ids pass.
+pub fn allowed(key: &str) -> bool {
+    if KNOWN_KEYS.contains(&key) {
+        return true;
+    }
+    let Some(rest) = key.strip_prefix("provider-") else {
+        return false;
+    };
+    let Some((id, kind)) = rest.rsplit_once('-') else {
+        return false;
+    };
+    (kind == "key" || kind == "oauth")
+        && crate::providers::PROVIDERS.iter().any(|p| p.id == id)
+}
+
 fn entry(key: &str) -> Option<Entry> {
-    if !KNOWN_KEYS.contains(&key) {
+    if !allowed(key) {
         return None;
     }
     Entry::new(SERVICE, key).ok()

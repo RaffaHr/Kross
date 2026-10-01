@@ -24,4 +24,5 @@ O usuário pediu login "por API key ou OAuth com subscription" para Claude, Code
 
 - O risco de banimento é assumido pelo usuário, por escolha informada — não é um bug se acontecer.
 - Constantes de OAuth (client IDs, endpoints, escopos) são copiadas dos CLIs oficiais e podem quebrar silenciosamente — adapters concentram essas constantes e a UI deve tratar falha de troca de token como "desconectado", não crash.
+- **Exceção Google**: o par client id/secret do gemini-cli é público mas tripa o push protection do GitHub — não pode ser embutido no binário. O usuário informa o par em Settings → Providers (campos `googleClientId`/`googleClientSecret`, armazenados como settings comuns — não são credenciais de usuário) ou via env `COUCOU_GOOGLE_CLIENT_ID`/`COUCOU_GOOGLE_CLIENT_SECRET`. Sem o par configurado, o "Sign in" do Google fica desabilitado.
 - Não registrar tokens em logs; `log.rs` nunca recebe valores de credencial.

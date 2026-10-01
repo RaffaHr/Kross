@@ -90,8 +90,18 @@ export interface Settings {
   screen: "primary" | "cursor";
   autostart: boolean;
   hooksInstalled: boolean;
-  /** Claude model used by the chat. */
+  /** Claude model used by the chat — legacy; providerModels["claude"] wins when set. */
   model: string;
+  /** Which provider answers the chat. */
+  activeProvider: string;
+  /** Per-provider model overrides, keyed by provider id. */
+  providerModels: Record<string, string>;
+  /** Base URL for the custom OpenAI-compatible provider. */
+  customBaseUrl: string;
+  /** Google's public OAuth client registration — user-pasted (the binary
+   *  can't ship the literal without tripping secret scanners). */
+  googleClientId: string;
+  googleClientSecret: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -106,6 +116,11 @@ export const DEFAULT_SETTINGS: Settings = {
   autostart: false,
   hooksInstalled: false,
   model: "claude-opus-5",
+  activeProvider: "claude",
+  providerModels: {},
+  customBaseUrl: "",
+  googleClientId: "",
+  googleClientSecret: "",
 };
 
 type Listener = () => void;

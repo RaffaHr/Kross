@@ -1,7 +1,7 @@
 ---
 id: T-004
 title: Settings — seção Providers (lista, connect, provider ativo)
-status: open
+status: done
 blockedBy: [T-001]
 specRef: .specdriven/specs/SPEC-001-multi-provider.md
 trackerRef: .specdriven/tickets/T-004-settings-providers-ui.md
@@ -15,11 +15,11 @@ A janela Settings lista os 5 providers com estado (conectado via key/OAuth ou n�
 
 ## Critérios de aceite
 
-- [ ] Cada provider mostra método(s) de auth disponíveis e estado real lido do Credential Manager
-- [ ] Disconnect remove a credencial (api key e/ou tokens OAuth) e reflete na UI
-- [ ] Provider ativo persiste em `settings.json` e vale sem restart
-- [ ] Aviso de ToS junto aos botões OAuth
-- [ ] Visual consistente com o Settings existente (`src/settings/`, `settings.css`)
+- [x] Cada provider mostra método(s) de auth disponíveis e estado real lido do Credential Manager
+- [x] Disconnect remove a credencial (api key e/ou tokens OAuth) e reflete na UI
+- [x] Provider ativo persiste em `settings.json` e vale sem restart
+- [x] Aviso de ToS junto aos botões OAuth
+- [x] Visual consistente com o Settings existente (`src/settings/`, `settings.css`)
 
 ## Seams TDD
 

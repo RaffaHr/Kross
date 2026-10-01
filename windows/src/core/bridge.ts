@@ -90,6 +90,21 @@ export const Bridge = {
   secretSet: (key: string, value: string) => callOrThrow<void>("secret_set", { key, value }),
   secretClear: (key: string) => callOrThrow<void>("secret_clear", { key }),
 
+  // ── AI providers ──────────────────────────────────────────────────────────
+  providersList: () => call<ProviderInfo[]>("providers_list"),
+  /** Switch the active provider; resets the chat history on the Rust side. */
+  providerSetActive: (id: string) => callOrThrow<void>("provider_set_active", { id }),
+  /**
+   * "Sign in with …": returns the consent URL to open. When `expectsPaste` is
+   * false a loopback listener finishes the flow and emits
+   * `provider-oauth-complete`; when true the UI must collect the pasted code
+   * and call providerOauthFinish.
+   */
+  providerOauthBegin: (id: string) => callOrThrow<OauthBegin>("provider_oauth_begin", { id }),
+  providerOauthFinish: (id: string, pasted: string) =>
+    callOrThrow<void>("provider_oauth_finish", { id, pasted }),
+  providerDisconnect: (id: string) => callOrThrow<void>("provider_disconnect", { id }),
+
   // ── Integrations ──────────────────────────────────────────────────────────
   refreshIntegration: (id: string) => call<void>("refresh_integration", { id }),
   /** Opens the configured n8n instance in the browser. */
@@ -121,6 +136,35 @@ export interface HookStatus {
   settingsPath: string;
   hookPath: string;
   hookReady: boolean;
+}
+
+export interface ProviderInfo {
+  id: string;
+  name: string;
+  /** Whether "Sign in with …" is offered. */
+  oauth: boolean;
+  /** Client registration is user-supplied — show id/secret inputs. */
+  oauthClientFields: boolean;
+  /** Sign-in can actually start (static or configured client). */
+  oauthConfigured: boolean;
+  connected: boolean;
+  active: boolean;
+  model: string;
+  models: string[];
+  keyPlaceholder: string;
+  /** True for the OpenAI-compatible provider that needs a base URL. */
+  custom: boolean;
+}
+
+export interface OauthBegin {
+  url: string;
+  expectsPaste: boolean;
+}
+
+export interface OauthComplete {
+  id: string;
+  ok: boolean;
+  error: string | null;
 }
 
 export interface HookPreview {

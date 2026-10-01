@@ -3,7 +3,13 @@
 // integrations land here too in a later stage.
 
 import "./settings.css";
-import { Bridge, onEvent, type HookStatus } from "../core/bridge";
+import {
+  Bridge,
+  onEvent,
+  type HookStatus,
+  type OauthComplete,
+  type ProviderInfo,
+} from "../core/bridge";
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
 
@@ -171,86 +177,251 @@ function claudeSection(status: HookStatus): HTMLElement {
   return section;
 }
 
-// ── Claude API section ────────────────────────────────────────────────────────
+// ── AI providers section ──────────────────────────────────────────────────────
+//
+// Each provider gets a card: active radio, connection status, an API-key field
+// and — where the provider allows it — a "Sign in" OAuth button. The keys and
+// tokens live in the Credential Manager; the window only ever sees "connected".
 
-const MODELS: [string, string][] = [
-  ["claude-opus-5", "Claude Opus 5"],
-  ["claude-sonnet-5", "Claude Sonnet 5"],
-  ["claude-haiku-4-5", "Claude Haiku 4.5"],
-];
+function providerCard(p: ProviderInfo, rebuild: () => void): HTMLElement {
+  const card = h("div", {
+    style: "display:flex;flex-direction:column;gap:8px;padding:10px 0;border-top:1px solid rgba(255,255,255,.08)",
+  });
+  const feedback = h("div", {});
+  const note = (cls: string, text: string) => {
+    clear(feedback);
+    feedback.append(h("div", { class: `notice ${cls}`, text }));
+  };
 
-function apiSection(hasKey: boolean): HTMLElement {
-  const dot = statusDot(hasKey);
-  const state = h("span", { class: "hint", text: hasKey ? "Key saved in the Windows Credential Manager." : "No key yet — the chat needs one." });
+  // Header: active radio + name + status.
+  const radio = h("button", {
+    class: p.active ? "switch on" : "switch",
+    "aria-pressed": p.active,
+    title: p.active ? "Active provider" : "Make active",
+  });
+  radio.addEventListener("click", async () => {
+    if (p.active) return;
+    try {
+      await Bridge.providerSetActive(p.id);
+      rebuild();
+    } catch (err) {
+      note("err", String(err));
+    }
+  });
+  card.append(
+    h("div", { class: "row" },
+      radio,
+      h("span", { text: p.name, style: "font-weight:600" }),
+      statusDot(p.connected),
+      h("span", {
+        class: "hint",
+        text: p.active ? "answering the chat" : p.connected ? "connected" : "not connected",
+      }),
+    ),
+  );
 
-  const field = h("input", {
+  // OAuth sign-in (Claude/Codex/Google). The subscription path is the one the
+  // user accepted in ADR-0002 — the warning stays next to the button.
+  if (p.oauth) {
+    const signIn = h("button", { text: `Sign in with ${p.name}` });
+    if (!p.oauthConfigured) signIn.disabled = true;
+
+    // Google can't ship its public client registration without tripping
+    // secret scanners, so the user pastes the pair here (or exports
+    // COUCOU_GOOGLE_CLIENT_ID / COUCOU_GOOGLE_CLIENT_SECRET).
+    if (p.oauthClientFields) {
+      const field = (label: string, key: "googleClientId" | "googleClientSecret", password: boolean) => {
+        const input = h("input", {
+          type: password ? "password" : "text",
+          placeholder: `${label}…`,
+          value: settings[key],
+          autocomplete: "off",
+          spellcheck: "false",
+          style: "flex:1 1 auto;min-width:0",
+        }) as HTMLInputElement;
+        input.addEventListener("change", () => {
+          settings[key] = input.value.trim();
+          void save().then(rebuild);
+        });
+        return h("div", { class: "row" }, h("label", { text: label }), input);
+      };
+      card.append(
+        field("OAuth client ID", "googleClientId", false),
+        field("OAuth client secret", "googleClientSecret", true),
+        h("div", {
+          class: "hint",
+          text: "Google sign-in needs the public OAuth client pair — e.g. the values gemini-cli ships — or set COUCOU_GOOGLE_CLIENT_ID / COUCOU_GOOGLE_CLIENT_SECRET.",
+        }),
+      );
+    }
+
+    const pasteRow = h("div", { class: "row", style: "display:none" });
+    const paste = h("input", {
+      type: "text",
+      placeholder: "Paste the code the page shows",
+      autocomplete: "off",
+      spellcheck: "false",
+      style: "flex:1 1 auto;min-width:0",
+    }) as HTMLInputElement;
+    const finish = h("button", { class: "primary", text: "Finish sign-in" });
+    finish.addEventListener("click", async () => {
+      const value = paste.value.trim();
+      if (!value) return;
+      finish.disabled = true;
+      try {
+        await Bridge.providerOauthFinish(p.id, value);
+        note("ok", "Signed in.");
+        rebuild();
+      } catch (err) {
+        finish.disabled = false;
+        note("err", String(err));
+      }
+    });
+    pasteRow.append(paste, finish);
+    signIn.addEventListener("click", async () => {
+      signIn.disabled = true;
+      try {
+        const begin = await Bridge.providerOauthBegin(p.id);
+        if (begin) {
+          Bridge.openUrl(begin.url);
+          if (begin.expectsPaste) {
+            pasteRow.style.display = "flex";
+            paste.focus();
+          } else {
+            note("", "Waiting for the browser — finish signing in there.");
+          }
+        }
+      } catch (err) {
+        note("err", String(err));
+        signIn.disabled = false;
+      }
+    });
+    card.append(
+      h("div", { class: "row" }, signIn),
+      h("div", {
+        class: "hint",
+        text: "Sign-in uses your subscription the same way the provider's own CLI does — it may conflict with the provider's terms of service for third-party clients.",
+      }),
+      pasteRow,
+    );
+  }
+
+  // API key row — always present; OAuth + key can coexist (OAuth wins).
+  const keyField = h("input", {
     type: "password",
-    placeholder: hasKey ? "••••••••••••  (stored)" : "sk-ant-...",
-    style: "flex:1 1 auto;min-width:0",
+    placeholder: p.connected ? "••••••••  (stored)" : p.keyPlaceholder,
     autocomplete: "off",
     spellcheck: "false",
+    style: "flex:1 1 auto;min-width:0",
   }) as HTMLInputElement;
-
-  const saveBtn = h("button", { class: "primary", text: "Save key" });
-  const clearBtn = h("button", { class: "danger", text: "Remove" });
-  const feedback = h("div", {});
-
-  async function refresh() {
-    const present = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
-    dot.style.background = present ? "#22c55e" : "#f4505e";
-    state.textContent = present
-      ? "Key saved in the Windows Credential Manager."
-      : "No key yet — the chat needs one.";
-    field.placeholder = present ? "••••••••••••  (stored)" : "sk-ant-...";
-    clearBtn.style.display = present ? "" : "none";
-  }
-
-  saveBtn.addEventListener("click", async () => {
-    const value = field.value.trim();
+  const saveKey = h("button", { text: "Save key" });
+  saveKey.addEventListener("click", async () => {
+    const value = keyField.value.trim();
     if (!value) return;
-    clear(feedback);
     try {
-      await Bridge.secretSet("anthropic-api-key", value);
-      field.value = "";
-      feedback.append(h("div", { class: "notice ok", text: "Saved. It never touches disk." }));
-      await refresh();
+      await Bridge.secretSet(`provider-${p.id}-key`, value);
+      keyField.value = "";
+      note("ok", "Key saved. It never touches disk.");
+      rebuild();
     } catch (err) {
-      feedback.append(h("div", { class: "notice err", text: `Could not save: ${String(err)}` }));
+      note("err", String(err));
     }
   });
+  card.append(h("div", { class: "row" }, h("label", { text: "API key" }), keyField, saveKey));
 
-  clearBtn.addEventListener("click", async () => {
-    clear(feedback);
-    try {
-      await Bridge.secretClear("anthropic-api-key");
-      feedback.append(h("div", { class: "notice ok", text: "Key removed." }));
-      await refresh();
-    } catch (err) {
-      feedback.append(h("div", { class: "notice err", text: `Could not remove: ${String(err)}` }));
-    }
-  });
-
-  const model = h("select", {}) as HTMLSelectElement;
-  for (const [id, label] of MODELS) model.append(h("option", { value: id, text: label }));
-  if (!MODELS.some(([id]) => id === settings.model)) {
-    model.append(h("option", { value: settings.model, text: settings.model }));
+  // Custom provider: base URL is a normal setting, not a secret.
+  if (p.custom) {
+    const base = h("input", {
+      type: "text",
+      placeholder: "https://your-endpoint/v1",
+      value: settings.customBaseUrl,
+      autocomplete: "off",
+      spellcheck: "false",
+      style: "flex:1 1 auto;min-width:0",
+    }) as HTMLInputElement;
+    base.addEventListener("change", () => {
+      settings.customBaseUrl = base.value.trim();
+      void save();
+    });
+    card.append(h("div", { class: "row" }, h("label", { text: "Base URL" }), base));
   }
-  model.value = settings.model;
-  model.addEventListener("change", () => {
-    settings.model = model.value;
-    void save();
-  });
 
-  clearBtn.style.display = hasKey ? "" : "none";
+  // Model: dropdown when the provider declares models, free text for custom.
+  if (p.models.length > 0) {
+    const model = h("select", {}) as HTMLSelectElement;
+    for (const id of p.models) model.append(h("option", { value: id, text: id }));
+    if (!p.models.includes(p.model) && p.model) {
+      model.append(h("option", { value: p.model, text: p.model }));
+    }
+    model.value = p.model;
+    model.addEventListener("change", () => {
+      settings.providerModels = { ...settings.providerModels, [p.id]: model.value };
+      if (p.id === "claude") settings.model = model.value; // legacy field stays in sync
+      void save();
+    });
+    card.append(h("div", { class: "row" }, h("label", { text: "Model" }), model));
+  } else {
+    const model = h("input", {
+      type: "text",
+      placeholder: "model name",
+      value: p.model,
+      autocomplete: "off",
+      spellcheck: "false",
+      style: "flex:1 1 auto;min-width:0",
+    }) as HTMLInputElement;
+    model.addEventListener("change", () => {
+      settings.providerModels = { ...settings.providerModels, [p.id]: model.value.trim() };
+      void save();
+    });
+    card.append(h("div", { class: "row" }, h("label", { text: "Model" }), model));
+  }
+
+  if (p.connected) {
+    const disconnect = h("button", { class: "danger", text: "Disconnect" });
+    disconnect.addEventListener("click", async () => {
+      try {
+        await Bridge.providerDisconnect(p.id);
+        note("ok", "Signed out and key removed.");
+        rebuild();
+      } catch (err) {
+        note("err", String(err));
+      }
+    });
+    card.append(h("div", { class: "row" }, disconnect));
+  }
+
+  card.append(feedback);
+  return card;
+}
+
+function providersSection(list: ProviderInfo[]): HTMLElement {
+  const body = h("div", { style: "display:flex;flex-direction:column" });
+
+  const rebuild = () => {
+    void Bridge.providersList().then((fresh) => {
+      clear(body);
+      for (const p of fresh ?? list) body.append(providerCard(p, rebuild));
+    });
+  };
+  for (const p of list) body.append(providerCard(p, rebuild));
+
+  // Loopback sign-ins land here when the browser comes back.
+  void onEvent<OauthComplete>("provider-oauth-complete", (done) => {
+    rebuild();
+    if (!done.ok && done.error) {
+      body.prepend(h("div", { class: "notice err", text: done.error }));
+    }
+  });
 
   return h(
     "section",
     {},
-    h("h2", {}, dot, h("span", { text: "Claude" })),
-    state,
-    h("div", { class: "row" }, h("label", { text: "API key" }), field, saveBtn, clearBtn),
-    h("div", { class: "row" }, h("label", { text: "Model" }), model),
-    feedback,
+    h("h2", {}, h("span", { text: "Providers" })),
+    h("div", {
+      class: "hint",
+      text: "The provider you activate answers every chat. Keys and sign-ins live in the Windows Credential Manager, never on disk.",
+    }),
+    body,
   );
 }
 
@@ -429,7 +600,7 @@ async function main() {
     installed: false, settingsPath: "", hookPath: "", hookReady: false,
   };
 
-  const hasKey = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
+  const providers = (await Bridge.providersList()) ?? [];
 
   const keys = [
     "stripe-api-key", "github-token", "vercel-token",
@@ -442,7 +613,7 @@ async function main() {
   root.append(
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
     claudeSection(status),
-    apiSection(hasKey),
+    providersSection(providers),
     integrationsSection(present),
     generalSection(),
     h("div", {

@@ -1,7 +1,7 @@
 ---
 id: T-005
 title: vite.config — ignorar target/ e src-tauri/ no watch (EBUSY no tauri dev)
-status: open
+status: done
 blockedBy: []
 specRef: .specdriven/specs/SPEC-002-vite-watch-ignore.md
 trackerRef: .specdriven/tickets/T-005-vite-watch-ignore.md
@@ -15,8 +15,8 @@ trackerRef: .specdriven/tickets/T-005-vite-watch-ignore.md
 
 ## Critérios de aceite
 
-- [ ] `npm run tauri dev` passa do primeiro build sem `EBUSY`
-- [ ] Editar `src/**` ainda dispara hot-reload do front end
+- [x] `npm run tauri dev` passa do primeiro build sem `EBUSY`
+- [x] Editar `src/**` ainda dispara hot-reload do front end
 
 ## Seams TDD
 

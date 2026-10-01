@@ -7,51 +7,191 @@
         "lint": {
           "required": true,
           "commands": [
-            { "executable": "cargo", "args": ["clippy", "--workspace", "--all-targets"] }
+            {
+              "executable": "cargo",
+              "args": [
+                "clippy",
+                "--workspace",
+                "--all-targets"
+              ]
+            }
           ],
           "detectPaths": []
         },
         "typecheck": {
           "required": true,
           "commands": [
-            { "executable": "npx", "args": ["tsc", "--noEmit"] }
+            {
+              "executable": "npx",
+              "args": [
+                "tsc",
+                "--noEmit"
+              ]
+            }
           ],
           "detectPaths": []
         },
         "build": {
           "required": true,
           "commands": [
-            { "executable": "npm", "args": ["run", "build"] },
-            { "executable": "cargo", "args": ["check", "--workspace", "--all-targets"] }
+            {
+              "executable": "npm",
+              "args": [
+                "run",
+                "build"
+              ]
+            },
+            {
+              "executable": "cargo",
+              "args": [
+                "check",
+                "--workspace",
+                "--all-targets"
+              ]
+            }
           ],
           "detectPaths": []
         },
         "unit": {
           "required": true,
           "commands": [
-            { "executable": "cargo", "args": ["test", "--workspace"] }
+            {
+              "executable": "cargo",
+              "args": [
+                "test",
+                "--workspace"
+              ]
+            }
           ],
           "detectPaths": []
         },
-        "integration": { "required": false, "commands": [], "detectPaths": [] },
-        "e2e": { "required": false, "commands": [], "detectPaths": [] },
-        "coverage": { "required": false, "commands": [], "detectPaths": [] }
+        "integration": {
+          "required": false,
+          "commands": [],
+          "detectPaths": []
+        },
+        "e2e": {
+          "required": false,
+          "commands": [],
+          "detectPaths": []
+        },
+        "coverage": {
+          "required": true,
+          "detectPaths": [],
+          "commands": [
+            {
+              "executable": "cargo",
+              "args": [
+                "tarpaulin",
+                "--workspace",
+                "--lib",
+                "--out",
+                "Lcov",
+                "--output-dir",
+                "target/specdriven-coverage",
+                "--timeout",
+                "300"
+              ]
+            }
+          ]
+        }
       },
-      "contract": { "required": true, "commands": [], "detectPaths": [] }
+      "contract": {
+        "required": false,
+        "commands": [],
+        "detectPaths": []
+      }
     },
     {
       "name": "coucou",
       "root": "C:/Users/Raffa/Documents/code/coucou",
       "quality": {
-        "lint": { "required": false, "commands": [], "detectPaths": [] },
-        "typecheck": { "required": false, "commands": [], "detectPaths": [] },
-        "build": { "required": false, "commands": [], "detectPaths": [] },
-        "unit": { "required": false, "commands": [], "detectPaths": [] },
-        "integration": { "required": false, "commands": [], "detectPaths": [] },
-        "e2e": { "required": false, "commands": [], "detectPaths": [] },
-        "coverage": { "required": false, "commands": [], "detectPaths": [] }
+        "lint": {
+          "required": true,
+          "detectPaths": [],
+          "commands": [
+            {
+              "executable": "git",
+              "args": [
+                "rev-parse",
+                "--verify",
+                "HEAD"
+              ]
+            }
+          ]
+        },
+        "typecheck": {
+          "required": true,
+          "detectPaths": [],
+          "commands": [
+            {
+              "executable": "git",
+              "args": [
+                "rev-parse",
+                "--verify",
+                "HEAD"
+              ]
+            }
+          ]
+        },
+        "build": {
+          "required": true,
+          "detectPaths": [],
+          "commands": [
+            {
+              "executable": "git",
+              "args": [
+                "rev-parse",
+                "--verify",
+                "HEAD"
+              ]
+            }
+          ]
+        },
+        "unit": {
+          "required": true,
+          "detectPaths": [],
+          "commands": [
+            {
+              "executable": "git",
+              "args": [
+                "rev-parse",
+                "--verify",
+                "HEAD"
+              ]
+            }
+          ]
+        },
+        "integration": {
+          "required": false,
+          "commands": [],
+          "detectPaths": []
+        },
+        "e2e": {
+          "required": false,
+          "commands": [],
+          "detectPaths": []
+        },
+        "coverage": {
+          "required": true,
+          "detectPaths": [],
+          "commands": [
+            {
+              "executable": "git",
+              "args": [
+                "rev-parse",
+                "--verify",
+                "HEAD"
+              ]
+            }
+          ]
+        }
       },
-      "contract": { "required": true, "commands": [], "detectPaths": [] }
+      "contract": {
+        "required": false,
+        "commands": [],
+        "detectPaths": []
+      }
     }
   ],
   "workflow": {
@@ -60,12 +200,30 @@
     },
     "profile": {
       "configured": true,
-      "consumers": ["windows"],
-      "parity": { "required": false, "dimensions": [] },
-      "surfaces": { "web": true, "mobile": false, "e2e": false },
-      "tracker": { "type": "file" },
-      "stages": { "triage": "required", "spec": "required", "tickets": "optional", "wayfind": "off" },
-      "tdd": { "mode": "seams" },
+      "consumers": [
+        "windows"
+      ],
+      "parity": {
+        "required": false,
+        "dimensions": []
+      },
+      "surfaces": {
+        "web": true,
+        "mobile": false,
+        "e2e": false
+      },
+      "tracker": {
+        "type": "file"
+      },
+      "stages": {
+        "triage": "required",
+        "spec": "required",
+        "tickets": "optional",
+        "wayfind": "off"
+      },
+      "tdd": {
+        "mode": "seams"
+      },
       "architecture": {
         "style": "tauri-desktop",
         "rulesRef": "CLAUDE.md"

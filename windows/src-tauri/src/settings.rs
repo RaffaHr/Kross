@@ -16,14 +16,50 @@ pub struct Settings {
     pub screen: String,
     pub autostart: bool,
     pub hooks_installed: bool,
-    /// Claude model used by the chat. Changeable in the settings window.
+    /// Claude model used by the chat — legacy field; the multi-provider
+    /// equivalent is `provider_models["claude"]`, which wins when set.
     /// Defaulted explicitly so a settings.json written by an older build still loads.
     #[serde(default = "default_model")]
     pub model: String,
+    /// Which provider drives `chat_send` — one of providers::PROVIDERS ids.
+    #[serde(default = "default_active_provider")]
+    pub active_provider: String,
+    /// Per-provider model overrides; absent entries use the provider default.
+    #[serde(default)]
+    pub provider_models: std::collections::HashMap<String, String>,
+    /// Base URL for the `custom` OpenAI-compatible provider — not a secret.
+    #[serde(default)]
+    pub custom_base_url: String,
+    /// Google's OAuth client registration, pasted by the user in Settings →
+    /// Providers. These are *public installed-app* values (the same pair every
+    /// Gemini-CLI install ships) kept out of the binary because secret
+    /// scanners flag the literals — they are not user credentials, so plain
+    /// settings storage is fine. Env vars still override (see the spec).
+    #[serde(default)]
+    pub google_client_id: String,
+    #[serde(default)]
+    pub google_client_secret: String,
+}
+
+impl Settings {
+    /// User-supplied OAuth client registration for providers whose public
+    /// client can't ship in the binary. Returns the (id, secret) pair only
+    /// when both are set — a lone id would die at the token endpoint anyway.
+    pub fn oauth_client(&self, provider: &str) -> Option<(String, String)> {
+        let (id, secret) = match provider {
+            "google" => (self.google_client_id.trim(), self.google_client_secret.trim()),
+            _ => return None,
+        };
+        (!id.is_empty() && !secret.is_empty()).then(|| (id.to_string(), secret.to_string()))
+    }
 }
 
 fn default_model() -> String {
-    crate::claude::DEFAULT_MODEL.to_string()
+    "claude-opus-5".to_string()
+}
+
+fn default_active_provider() -> String {
+    "claude".to_string()
 }
 
 impl Default for Settings {
@@ -43,6 +79,11 @@ impl Default for Settings {
             autostart: false,
             hooks_installed: false,
             model: default_model(),
+            active_provider: default_active_provider(),
+            provider_models: std::collections::HashMap::new(),
+            custom_base_url: String::new(),
+            google_client_id: String::new(),
+            google_client_secret: String::new(),
         }
     }
 }

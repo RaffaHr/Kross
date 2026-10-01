@@ -1,7 +1,7 @@
 ---
 id: T-002
 title: Adapters por API key — Claude, Codex/OpenAI, Hermes preset, custom
-status: open
+status: done
 blockedBy: [T-001]
 specRef: .specdriven/specs/SPEC-001-multi-provider.md
 trackerRef: .specdriven/tickets/T-002-apikey-providers.md
@@ -15,10 +15,10 @@ Chat da island funciona com um provider não-Claude por API key: adapter `openai
 
 ## Critérios de aceite
 
-- [ ] Mensagem enviada com provider `codex` ou `custom` ativo retorna resposta (contexto de arquivo/janela mapeado ao formato do provider)
-- [ ] Erros de auth propagam a mensagem do provider (como `call()` faz hoje)
-- [ ] `custom` exige base URL; sem URL → erro claro, sem request
-- [ ] Gates verdes (`cargo clippy`, `tsc`, `npm run build`+`cargo check`, `cargo test`)
+- [x] Mensagem enviada com provider `codex` ou `custom` ativo retorna resposta (contexto de arquivo/janela mapeado ao formato do provider)
+- [x] Erros de auth propagam a mensagem do provider (como `call()` faz hoje)
+- [x] `custom` exige base URL; sem URL → erro claro, sem request
+- [x] Gates verdes (`cargo clippy`, `tsc`, `npm run build`+`cargo check`, `cargo test`)
 
 ## Seams TDD
 

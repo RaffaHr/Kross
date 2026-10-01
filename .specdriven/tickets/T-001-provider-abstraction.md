@@ -1,7 +1,7 @@
 ---
 id: T-001
 title: Provider abstraction + plumbing de secrets/settings
-status: open
+status: done
 blockedBy: []
 specRef: .specdriven/specs/SPEC-001-multi-provider.md
 trackerRef: .specdriven/tickets/T-001-provider-abstraction.md
@@ -15,11 +15,11 @@ trackerRef: .specdriven/tickets/T-001-provider-abstraction.md
 
 ## Critérios de aceite
 
-- [ ] `providers/mod.rs` define o contrato; nenhum adapter importa outro adapter
-- [ ] `secrets::KNOWN_KEYS` aceita chaves namespaced por provider (`provider-<id>-*`)
-- [ ] `settings.json` persiste `activeProvider`; ausente → `claude` (migração silenciosa)
-- [ ] `anthropic-api-key` legado continua valendo como credencial do adapter Claude
-- [ ] `cargo test --workspace` + `npx tsc --noEmit` verdes
+- [x] `providers/mod.rs` define o contrato; nenhum adapter importa outro adapter
+- [x] `secrets::KNOWN_KEYS` aceita chaves namespaced por provider (`provider-<id>-*`)
+- [x] `settings.json` persiste `activeProvider`; ausente → `claude` (migração silenciosa)
+- [x] `anthropic-api-key` legado continua valendo como credencial do adapter Claude
+- [x] `cargo test --workspace` + `npx tsc --noEmit` verdes
 
 ## Seams TDD
 

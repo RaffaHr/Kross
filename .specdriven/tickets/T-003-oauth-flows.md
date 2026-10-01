@@ -1,7 +1,7 @@
 ---
 id: T-003
 title: OAuth por subscription — Claude, Codex/ChatGPT, Google (Antigravity)
-status: open
+status: done
 blockedBy: [T-001]
 specRef: .specdriven/specs/SPEC-001-multi-provider.md
 trackerRef: .specdriven/tickets/T-003-oauth-flows.md
@@ -15,11 +15,11 @@ trackerRef: .specdriven/tickets/T-003-oauth-flows.md
 
 ## Critérios de aceite
 
-- [ ] Flow PKCE completo por provider OAuth (claude, codex, google)
-- [ ] Access/refresh tokens só no Credential Manager; cancelar o browser não trava a UI
-- [ ] Token expirado renova sem re-login; refresh inválido → estado "desconectado" + UI permite novo sign-in
-- [ ] Adapter escolhe credencial OAuth quando presente, API key como alternativa
-- [ ] Aviso de ToS visível ao lado de cada botão OAuth (ADR-0002)
+- [x] Flow PKCE completo por provider OAuth (claude, codex, google)
+- [x] Access/refresh tokens só no Credential Manager; cancelar o browser não trava a UI
+- [x] Token expirado renova sem re-login; refresh inválido → estado "desconectado" + UI permite novo sign-in
+- [x] Adapter escolhe credencial OAuth quando presente, API key como alternativa
+- [x] Aviso de ToS visível ao lado de cada botão OAuth (ADR-0002)
 
 ## Seams TDD
 

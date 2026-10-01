@@ -32,3 +32,6 @@ windows = { version = "0.61", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
 ] }
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.2"

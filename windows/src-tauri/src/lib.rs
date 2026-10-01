@@ -1,12 +1,12 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
-mod claude;
 mod files;
 mod hooks;
 mod integrations;
 mod island;
 mod log;
 mod pipe;
+mod providers;
 mod secrets;
 mod settings;
 mod tray;
@@ -21,11 +21,11 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::{ManagerExt, MacosLauncher};
 
-use claude::{Chat, ChatContext, ChatReply};
 use files::DroppedFile;
 use hooks::{HookPreview, HookStatus};
 use island::{PollGate, ScreenInfo};
 use pipe::Pending;
+use providers::{Chat, ChatContext, ChatReply};
 use settings::Settings;
 
 /// Keeps spawned helpers from flashing a console window.
@@ -240,7 +240,8 @@ fn approval_decline(app: AppHandle, request_id: String) {
 
 // ── Chat, files and secrets ───────────────────────────────────────────────────
 
-/// One chat turn. The API key and any file bytes stay on the Rust side.
+/// One chat turn, routed through the active provider. The credential and any
+/// file bytes stay on the Rust side.
 #[tauri::command]
 async fn chat_send(
     shared: State<'_, Shared>,
@@ -248,13 +249,174 @@ async fn chat_send(
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
-    let model = shared.settings.lock().unwrap().model.clone();
-    claude::send(&chat, &model, query, context).await
+    let settings = shared.settings.lock().unwrap().clone();
+    providers::send(&chat, &settings, query, context).await
 }
 
 #[tauri::command]
 fn chat_reset(chat: State<Chat>) {
     chat.reset();
+}
+
+// ── Providers ────────────────────────────────────────────────────────────────
+
+/// A sign-in in progress, kept between `provider_oauth_begin` (which returns
+/// the URL + whether the user must paste a code) and `provider_oauth_finish`.
+#[derive(Default)]
+pub struct OauthInFlight(Mutex<std::collections::HashMap<String, providers::oauth::Pending>>);
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderInfo {
+    id: String,
+    name: String,
+    /// "Sign in with …" exists for this provider.
+    oauth: bool,
+    /// The client registration is user-supplied — show id/secret inputs
+    /// (Google, whose public pair can't ship without tripping scanners).
+    oauth_client_fields: bool,
+    /// A sign-in can actually start: static client, or configured via
+    /// Settings/env. Otherwise the button stays disabled.
+    oauth_configured: bool,
+    connected: bool,
+    active: bool,
+    model: String,
+    models: Vec<String>,
+    key_placeholder: String,
+    /// True for the OpenAI-compatible custom provider — needs a base URL field.
+    custom: bool,
+}
+
+#[tauri::command]
+fn providers_list(shared: State<Shared>) -> Vec<ProviderInfo> {
+    let settings = shared.settings.lock().unwrap().clone();
+    providers::PROVIDERS
+        .iter()
+        .map(|spec| ProviderInfo {
+            id: spec.id.to_string(),
+            name: spec.name.to_string(),
+            oauth: spec.oauth.is_some(),
+            oauth_client_fields: spec
+                .oauth
+                .as_ref()
+                .map(|o| o.client_id.is_empty())
+                .unwrap_or(false),
+            oauth_configured: spec
+                .oauth
+                .as_ref()
+                .map(|_| providers::oauth::client_credentials(spec, &settings).is_ok())
+                .unwrap_or(false),
+            connected: providers::connected(spec),
+            active: settings.active_provider == spec.id,
+            model: providers::model_for(spec, &settings),
+            models: spec.models.iter().map(|m| m.to_string()).collect(),
+            key_placeholder: spec.key_placeholder.to_string(),
+            custom: spec.id == "custom",
+        })
+        .collect()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OauthBegin {
+    url: String,
+    /// Claude's public client redirects to a hosted "paste this code" page.
+    expects_paste: bool,
+}
+
+/// "Sign in with …": opens the provider's consent page. Loopback providers
+/// finish in the background and emit `provider-oauth-complete`; paste providers
+/// wait for `provider_oauth_finish`.
+#[tauri::command]
+fn provider_oauth_begin(
+    app: AppHandle,
+    shared: State<Shared>,
+    in_flight: State<OauthInFlight>,
+    id: String,
+) -> Result<OauthBegin, String> {
+    let spec = providers::spec_of(&id);
+    let settings = shared.settings.lock().unwrap().clone();
+    let started = providers::oauth::begin(spec, &settings)?;
+    in_flight.0.lock().unwrap().insert(spec.id.to_string(), started.pending);
+    if let Some(rx) = started.receiver {
+        // The loopback listener is blocking; park it on its own task and
+        // report the outcome as an event the settings window can show.
+        tauri::async_runtime::spawn(async move {
+            let code = match tokio::task::spawn_blocking(move || rx.recv()).await {
+                Ok(Ok(result)) => result,
+                _ => Err("Sign-in listener stopped unexpectedly.".into()),
+            };
+            let outcome: Result<(), String> = match code {
+                Ok(code) => {
+                    let pending = {
+                        let state = app.state::<OauthInFlight>();
+                        let removed = state.0.lock().unwrap().remove(spec.id);
+                        removed
+                    };
+                    match pending {
+                        Some(pending) => providers::oauth::exchange(spec, &pending, &code, &settings)
+                            .await
+                            .map(|_| ()),
+                        None => Err("Sign-in expired — start over.".into()),
+                    }
+                }
+                Err(err) => Err(err),
+            };
+            let _ = app.emit(
+                "provider-oauth-complete",
+                serde_json::json!({ "id": spec.id, "ok": outcome.is_ok(), "error": outcome.err() }),
+            );
+        });
+    }
+    Ok(OauthBegin { url: started.begin.url, expects_paste: started.begin.expects_paste })
+}
+
+/// Claude's flow: the user pastes the `code#state` the hosted page showed.
+#[tauri::command]
+async fn provider_oauth_finish(
+    shared: State<'_, Shared>,
+    in_flight: State<'_, OauthInFlight>,
+    id: String,
+    pasted: String,
+) -> Result<(), String> {
+    let spec = providers::spec_of(&id);
+    let pending = in_flight.0.lock().unwrap().remove(spec.id).ok_or_else(|| {
+        "No sign-in is in progress — click Sign in first.".to_string()
+    })?;
+    let settings = shared.settings.lock().unwrap().clone();
+    providers::oauth::finish_paste(spec, pending, &pasted, &settings).await.map(|_| ())
+}
+
+/// Sign out / remove every credential kind for a provider.
+#[tauri::command]
+fn provider_disconnect(app: AppHandle, id: String) -> Result<(), String> {
+    if providers::spec_of(&id).id != id {
+        return Err(format!("Unknown provider {id}"));
+    }
+    providers::disconnect(&id);
+    let _ = app.emit("provider-oauth-complete", serde_json::json!({ "id": id, "ok": true, "error": null }));
+    Ok(())
+}
+
+/// Switch the active provider. Chat history is reset — an assistant turn from
+/// another provider may hold native blocks the new one can't read.
+#[tauri::command]
+fn provider_set_active(
+    app: AppHandle,
+    shared: State<Shared>,
+    chat: State<Chat>,
+    id: String,
+) -> Result<(), String> {
+    let spec = providers::spec_of(&id);
+    let updated = {
+        let mut current = shared.settings.lock().unwrap();
+        current.active_provider = spec.id.to_string();
+        let _ = settings::save(&current);
+        current.clone()
+    };
+    chat.reset();
+    let _ = app.emit("settings-changed", updated);
+    Ok(())
 }
 
 /// Copies a dropped file into the inbox and reports its name back.
@@ -380,6 +542,7 @@ pub fn run() {
         })
         .manage(Pending::default())
         .manage(Chat::default())
+        .manage(OauthInFlight::default())
         .invoke_handler(tauri::generate_handler![
             boot,
             save_settings,
@@ -399,6 +562,11 @@ pub fn run() {
             log_line,
             chat_send,
             chat_reset,
+            providers_list,
+            provider_set_active,
+            provider_oauth_begin,
+            provider_oauth_finish,
+            provider_disconnect,
             ingest_file,
             secret_present,
             secret_set,
