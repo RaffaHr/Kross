@@ -1,0 +1,75 @@
+{
+  "repositories": [
+    {
+      "name": "windows",
+      "root": "C:/Users/Raffa/Documents/code/coucou/windows",
+      "quality": {
+        "lint": {
+          "required": true,
+          "commands": [
+            { "executable": "cargo", "args": ["clippy", "--workspace", "--all-targets"] }
+          ],
+          "detectPaths": []
+        },
+        "typecheck": {
+          "required": true,
+          "commands": [
+            { "executable": "npx", "args": ["tsc", "--noEmit"] }
+          ],
+          "detectPaths": []
+        },
+        "build": {
+          "required": true,
+          "commands": [
+            { "executable": "npm", "args": ["run", "build"] },
+            { "executable": "cargo", "args": ["check", "--workspace", "--all-targets"] }
+          ],
+          "detectPaths": []
+        },
+        "unit": {
+          "required": true,
+          "commands": [
+            { "executable": "cargo", "args": ["test", "--workspace"] }
+          ],
+          "detectPaths": []
+        },
+        "integration": { "required": false, "commands": [], "detectPaths": [] },
+        "e2e": { "required": false, "commands": [], "detectPaths": [] },
+        "coverage": { "required": false, "commands": [], "detectPaths": [] }
+      },
+      "contract": { "required": true, "commands": [], "detectPaths": [] }
+    },
+    {
+      "name": "coucou",
+      "root": "C:/Users/Raffa/Documents/code/coucou",
+      "quality": {
+        "lint": { "required": false, "commands": [], "detectPaths": [] },
+        "typecheck": { "required": false, "commands": [], "detectPaths": [] },
+        "build": { "required": false, "commands": [], "detectPaths": [] },
+        "unit": { "required": false, "commands": [], "detectPaths": [] },
+        "integration": { "required": false, "commands": [], "detectPaths": [] },
+        "e2e": { "required": false, "commands": [], "detectPaths": [] },
+        "coverage": { "required": false, "commands": [], "detectPaths": [] }
+      },
+      "contract": { "required": true, "commands": [], "detectPaths": [] }
+    }
+  ],
+  "workflow": {
+    "worktrees": {
+      "workspaceRoot": "C:/Users/Raffa/Documents/code/coucou-worktrees"
+    },
+    "profile": {
+      "configured": true,
+      "consumers": ["windows"],
+      "parity": { "required": false, "dimensions": [] },
+      "surfaces": { "web": true, "mobile": false, "e2e": false },
+      "tracker": { "type": "file" },
+      "stages": { "triage": "required", "spec": "required", "tickets": "optional", "wayfind": "off" },
+      "tdd": { "mode": "seams" },
+      "architecture": {
+        "style": "tauri-desktop",
+        "rulesRef": "CLAUDE.md"
+      }
+    }
+  }
+}
