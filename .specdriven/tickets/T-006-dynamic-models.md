@@ -1,7 +1,7 @@
 ---
 id: T-006
 title: Lista de modelos dinâmica por provider (fetch ao abrir Settings)
-status: todo
+status: done
 blockedBy: []
 specRef: .specdriven/specs/SPEC-003-dynamic-models.md
 trackerRef: .specdriven/tickets/T-006-dynamic-models.md

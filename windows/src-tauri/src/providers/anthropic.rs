@@ -118,6 +118,42 @@ async fn call(credential: &Credential, body: &Value) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|e| format!("Bad API response: {e}"))
 }
 
+const MODELS_ENDPOINT: &str = "https://api.anthropic.com/v1/models";
+
+/// `GET /v1/models` — doubles as the connectivity probe: it accepts both the
+/// API key and the subscription OAuth token, so a 2xx means "can really talk".
+pub async fn list_models(credential: &Credential) -> Result<Vec<String>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let request = client
+        .get(format!("{MODELS_ENDPOINT}?limit=100"))
+        .header("anthropic-version", ANTHROPIC_VERSION);
+    let request = match credential {
+        Credential::ApiKey(key) => request.header("x-api-key", key),
+        Credential::OAuth(tokens) => request
+            .bearer_auth(&tokens.access_token)
+            .header("anthropic-beta", OAUTH_BETA),
+    };
+    let response = request.send().await.map_err(|e| format!("Network error: {e}"))?;
+    let status = response.status();
+    let text = response.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("HTTP {status}: {}", text.chars().take(200).collect::<String>()));
+    }
+    let body: Value = serde_json::from_str(&text).map_err(|e| format!("Bad models response: {e}"))?;
+    Ok(body
+        .get("data")
+        .and_then(Value::as_array)
+        .map(|data| {
+            data.iter()
+                .filter_map(|m| m.get("id").and_then(Value::as_str).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -47,89 +47,108 @@ function renderDiff(text: string): HTMLElement {
   return box;
 }
 
-// ── Claude Code section ───────────────────────────────────────────────────────
+// ── Provider hooks panel ──────────────────────────────────────────────────────
+// Every hookable provider gets this inside its card. It opens on its own once
+// the provider is connected — the CLI's sessions are only worth watching when
+// the provider is in use.
 
-function claudeSection(status: HookStatus): HTMLElement {
-  const body = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
-  const section = h(
-    "section",
-    {},
-    h("h2", {}, statusDot(status.installed), h("span", { text: "Claude Code" })),
-    body,
-  );
+function hooksPanel(providerId: string): HTMLElement {
+  const body = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
+  const wrap = h("div", {
+    style: "display:flex;flex-direction:column;gap:8px;border-top:1px dashed rgba(255,255,255,.08);padding-top:8px",
+  }, body);
 
-  const rebuild = async () => {
-    const fresh = await Bridge.hooksStatus();
-    if (fresh) Object.assign(status, fresh);
+  const draw = async () => {
     clear(body);
-    draw();
-    const head = section.querySelector("h2")!;
-    clear(head);
-    head.append(statusDot(status.installed), h("span", { text: "Claude Code" }));
-  };
+    body.append(h("div", { class: "hint", text: "Checking hook status…" }));
+    let status: HookStatus | null = null;
+    try {
+      status = await Bridge.hooksStatus(providerId);
+    } catch (err) {
+      clear(body);
+      body.append(h("div", { class: "notice err", text: String(err) }));
+      return;
+    }
+    clear(body);
+    if (!status) {
+      body.append(h("div", { class: "hint", text: "Hook status unavailable." }));
+      return;
+    }
+    const st = status;
 
-  function draw() {
     body.append(
+      h("div", { class: "row" },
+        statusDot(st.installed),
+        h("span", { text: `${st.cli} hooks`, style: "font-weight:600" }),
+      ),
       h("div", {
         class: "hint",
-        text: status.installed
-          ? "Coucou is hooked into your Claude Code sessions. Tool calls, questions and permission requests show up in the island, and you can answer them there."
-          : "Install the hooks to see your Claude Code sessions in the island and approve permissions without leaving what you are doing.",
+        text: st.installed
+          ? `Coucou is hooked into your ${st.cli} sessions. Tool calls, questions and permission requests show up in the island.`
+          : `Install the hooks to see your ${st.cli} sessions in the island and approve permissions without leaving what you are doing.`,
       }),
-      h("div", { class: "row" },
-        h("label", { text: "settings.json" }),
-        h("span", { class: "path", text: status.settingsPath }),
-      ),
-      h("div", { class: "row" },
-        h("label", { text: "Relay" }),
-        h("span", { class: "path", text: status.hookPath }),
-        statusDot(status.hookReady),
-      ),
     );
 
-    if (!status.hookReady) {
+    if (!st.cliDetected) {
+      body.append(h("div", {
+        class: "notice warn",
+        text: `${st.cli} doesn't seem to be installed on this machine — the hooks can be installed anyway, but nothing will run them until the CLI is.`,
+      }));
+    }
+    if (st.note) {
+      body.append(h("div", { class: "hint", text: st.note }));
+    }
+    if (!st.hookReady) {
       body.append(h("div", {
         class: "notice warn",
         text: "coucou-hook.exe is not in place yet. Restart Coucou; if it still fails, build it with `cargo build -p coucou-hook`.",
       }));
     }
 
+    body.append(
+      h("div", { class: "row" },
+        h("label", { text: "Config" }),
+        h("span", { class: "path", text: st.settingsPath }),
+      ),
+      h("div", { class: "hint", text: `Events: ${st.events.join(", ")}` }),
+    );
+
     const actions = h("div", { class: "row" });
     const install = h("button", {
       class: "primary",
-      text: status.installed ? "Reinstall hooks…" : "Install hooks…",
-      onclick: () => showPreview(true),
+      text: st.installed ? "Reinstall hooks…" : "Install hooks…",
+      onclick: () => void showPreview(true),
     });
     // Writing hook commands that point at a relay which isn't there would give
-    // every Claude Code session a broken hook and nothing to show for it.
-    if (!status.hookReady) {
+    // every CLI session a broken hook and nothing to show for it.
+    if (!st.hookReady) {
       install.disabled = true;
       install.title = "The relay isn't installed yet.";
     }
     actions.append(install);
-    if (status.installed) {
+    if (st.installed) {
       actions.append(h("button", {
         class: "danger",
         text: "Uninstall hooks…",
-        onclick: () => showPreview(false),
+        onclick: () => void showPreview(false),
       }));
     }
     body.append(actions);
-  }
+  };
 
   async function showPreview(install: boolean) {
     let preview;
     try {
-      preview = await Bridge.hooksPreview(install);
+      preview = await Bridge.hooksPreview(providerId, install);
     } catch (err) {
-      // An unreadable or invalid settings.json stops here rather than being
-      // treated as empty and written over.
+      // An unreadable or invalid config stops here rather than being treated
+      // as empty and written over.
       clear(body);
       body.append(
         h("div", { class: "notice err", text: String(err).replace(/^Error:\s*/, "") }),
         h("div", { class: "row" }, h("button", {
           text: "Back",
-          onclick: () => { clear(body); draw(); },
+          onclick: () => void draw(),
         })),
       );
       return;
@@ -140,7 +159,7 @@ function claudeSection(status: HookStatus): HTMLElement {
       h("div", {
         class: "hint",
         text: install
-          ? "This is exactly what will change in your settings.json. Your own hooks are left untouched."
+          ? "This is exactly what will change in the CLI's config. Your own hooks are left untouched."
           : "This removes Coucou's entries only. Your own hooks are left untouched.",
       }),
       renderDiff(preview.diff),
@@ -155,13 +174,13 @@ function claudeSection(status: HookStatus): HTMLElement {
     confirm.addEventListener("click", async () => {
       confirm.disabled = true;
       try {
-        const backup = await Bridge.hooksApply(install, preview.fingerprint);
+        const backup = await Bridge.hooksApply(providerId, install, preview.fingerprint);
         clear(body);
         body.append(h("div", {
           class: "notice ok",
-          text: `Done. Previous settings saved as ${backup}. Open a new Claude Code session to pick the hooks up.`,
+          text: `Done. Previous config saved as ${backup}. Open a new session to pick the hooks up.`,
         }));
-        window.setTimeout(() => void rebuild(), 2600);
+        window.setTimeout(() => void draw(), 2600);
       } catch (err) {
         confirm.disabled = false;
         body.append(h("div", { class: "notice err", text: `Could not write: ${String(err)}` }));
@@ -169,12 +188,12 @@ function claudeSection(status: HookStatus): HTMLElement {
     });
     body.append(h("div", { class: "row" }, confirm, h("button", {
       text: "Cancel",
-      onclick: () => { clear(body); draw(); },
+      onclick: () => void draw(),
     })));
   }
 
-  draw();
-  return section;
+  void draw();
+  return wrap;
 }
 
 // ── AI providers section ──────────────────────────────────────────────────────
@@ -193,7 +212,13 @@ function providerCard(p: ProviderInfo, rebuild: () => void): HTMLElement {
     feedback.append(h("div", { class: `notice ${cls}`, text }));
   };
 
-  // Header: active radio + name + status.
+  // Header: active radio + name + status. The status text starts at "checking…"
+  // when a credential exists — the probe below decides what it really is.
+  const dot = statusDot(p.connected);
+  const statusText = h("span", {
+    class: "hint",
+    text: p.connected ? "checking…" : "not connected",
+  });
   const radio = h("button", {
     class: p.active ? "switch on" : "switch",
     "aria-pressed": p.active,
@@ -212,11 +237,9 @@ function providerCard(p: ProviderInfo, rebuild: () => void): HTMLElement {
     h("div", { class: "row" },
       radio,
       h("span", { text: p.name, style: "font-weight:600" }),
-      statusDot(p.connected),
-      h("span", {
-        class: "hint",
-        text: p.active ? "answering the chat" : p.connected ? "connected" : "not connected",
-      }),
+      dot,
+      statusText,
+      p.active ? h("span", { class: "hint", text: "· answering the chat" }) : h("span", {}),
     ),
   );
 
@@ -346,14 +369,21 @@ function providerCard(p: ProviderInfo, rebuild: () => void): HTMLElement {
     card.append(h("div", { class: "row" }, h("label", { text: "Base URL" }), base));
   }
 
-  // Model: dropdown when the provider declares models, free text for custom.
-  if (p.models.length > 0) {
+  // Model: dropdown fed by the provider's own /models endpoint (the probe
+  // below) with the bundled list as fallback; free text for custom.
+  let modelSelect: HTMLSelectElement | null = null;
+  if (p.models.length > 0 || !p.custom) {
     const model = h("select", {}) as HTMLSelectElement;
-    for (const id of p.models) model.append(h("option", { value: id, text: id }));
-    if (!p.models.includes(p.model) && p.model) {
-      model.append(h("option", { value: p.model, text: p.model }));
-    }
-    model.value = p.model;
+    modelSelect = model;
+    const fill = (ids: string[]) => {
+      clear(model);
+      for (const id of ids) model.append(h("option", { value: id, text: id }));
+      if (!ids.includes(p.model) && p.model) {
+        model.append(h("option", { value: p.model, text: p.model }));
+      }
+      model.value = ids.includes(p.model) ? p.model : ids[0] ?? p.model;
+    };
+    fill(p.models);
     model.addEventListener("change", () => {
       settings.providerModels = { ...settings.providerModels, [p.id]: model.value };
       if (p.id === "claude") settings.model = model.value; // legacy field stays in sync
@@ -374,6 +404,54 @@ function providerCard(p: ProviderInfo, rebuild: () => void): HTMLElement {
       void save();
     });
     card.append(h("div", { class: "row" }, h("label", { text: "Model" }), model));
+  }
+
+  // The real connection check: one API call against the models endpoint. Its
+  // answer sets the status text and refreshes the dropdown with live models.
+  if (p.connected) {
+    void Bridge.providerProbe(p.id).then((result) => {
+      if (!result) return;
+      switch (result.state) {
+        case "connected":
+          statusText.textContent = "connected";
+          dot.style.background = "#22c55e";
+          if (modelSelect && result.models.length > 0) {
+            p.models = result.models;
+            const current = modelSelect.value;
+            const fillEvent = result.models.includes(current);
+            clear(modelSelect);
+            for (const id of result.models) {
+              modelSelect.append(h("option", { value: id, text: id }));
+            }
+            if (!fillEvent && p.model && !result.models.includes(p.model)) {
+              modelSelect.append(h("option", { value: p.model, text: p.model }));
+            }
+            modelSelect.value = result.models.includes(current) ? current
+              : (p.model && result.models.includes(p.model)) ? p.model : result.models[0];
+          }
+          break;
+        case "failed":
+          statusText.textContent = "credential rejected";
+          dot.style.background = "#f4505e";
+          if (result.error) note("err", `Connection failed: ${result.error}`);
+          break;
+        case "unverified":
+          statusText.textContent = "credential stored (unverified)";
+          dot.style.background = "#f5a524";
+          break;
+        default:
+          statusText.textContent = "not connected";
+          dot.style.background = "#f4505e";
+          if (result.error) note("err", result.error);
+      }
+    });
+  }
+
+  // Per-provider hooks: each CLI's own config file and event set, merged
+  // without touching anything else. The panel lives inside the card because
+  // the hooks only matter while the provider is connected.
+  if (p.hooksSupported) {
+    card.append(hooksPanel(p.id));
   }
 
   if (p.connected) {
@@ -596,10 +674,6 @@ async function main() {
     settings = { ...settings, ...boot.settings };
     version = boot.version;
   }
-  const status = (await Bridge.hooksStatus()) ?? {
-    installed: false, settingsPath: "", hookPath: "", hookReady: false,
-  };
-
   const providers = (await Bridge.providersList()) ?? [];
 
   const keys = [
@@ -612,7 +686,6 @@ async function main() {
   clear(root);
   root.append(
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
-    claudeSection(status),
     providersSection(providers),
     integrationsSection(present),
     generalSection(),

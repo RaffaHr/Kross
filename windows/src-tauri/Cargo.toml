@@ -35,3 +35,4 @@ windows = { version = "0.61", features = [
 sha2 = "0.10"
 base64 = "0.22"
 getrandom = "0.2"
+toml_edit = "0.25.15"

@@ -127,9 +127,19 @@ fn read_event() -> Option<(String, String)> {
     let mut payload = serde_json::from_slice::<serde_json::Value>(&raw).ok()?;
     let map = payload.as_object_mut()?;
 
-    // The event name is passed as argv[1] by the hook command; the JSON usually
-    // carries it too. Trust argv when the JSON is missing it.
-    let arg_event = std::env::args().nth(1).unwrap_or_default();
+    // The hook command is `coucou-hook <Event>` (Claude, predating providers)
+    // or `coucou-hook <provider> <Event>` (Codex, Gemini). A first argument that
+    // names a known CLI is the provider; anything else is the event itself.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let (provider, arg_event) = match args.as_slice() {
+        [first, second, ..] if ["claude", "codex", "google"].contains(&first.as_str()) => {
+            (first.clone(), second.clone())
+        }
+        [first, ..] => ("claude".to_string(), first.clone()),
+        _ => ("claude".to_string(), String::new()),
+    };
+    // The event name is also carried by the JSON usually; trust argv when the
+    // JSON is missing it.
     let event = map
         .get("hook_event_name")
         .and_then(|v| v.as_str())
@@ -137,6 +147,9 @@ fn read_event() -> Option<(String, String)> {
         .filter(|s| !s.is_empty())
         .unwrap_or(arg_event);
     map.insert("hook_event_name".into(), serde_json::Value::String(event.clone()));
+    if !map.contains_key("provider") {
+        map.insert("provider".into(), serde_json::Value::String(provider));
+    }
 
     for field in DROPPED_FIELDS {
         map.remove(*field);

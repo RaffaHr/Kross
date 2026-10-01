@@ -60,16 +60,17 @@ export const Bridge = {
   /** Writes to %LOCALAPPDATA%\Coucou\coucou.log, next to the Rust lines. */
   log: (message: string) => call<void>("log_line", { message }),
 
-  // ── Claude Code hooks ─────────────────────────────────────────────────────
-  hooksStatus: () => call<HookStatus>("hooks_status"),
+  // ── Provider CLI hooks ────────────────────────────────────────────────────
+  hooksStatus: (provider: string) => call<HookStatus>("hooks_status", { provider }),
   /** Diff to show before anything is written. `install: false` previews removal. */
-  hooksPreview: (install: boolean) => callOrThrow<HookPreview>("hooks_preview", { install }),
+  hooksPreview: (provider: string, install: boolean) =>
+    callOrThrow<HookPreview>("hooks_preview", { provider, install }),
   /**
-   * Writes ~/.claude/settings.json — only ever after an explicit click, and only
+   * Writes the CLI's config — only ever after an explicit click, and only
    * when the file still matches the preview the user looked at.
    */
-  hooksApply: (install: boolean, fingerprint: string) =>
-    callOrThrow<string>("hooks_apply", { install, fingerprint }),
+  hooksApply: (provider: string, install: boolean, fingerprint: string) =>
+    callOrThrow<string>("hooks_apply", { provider, install, fingerprint }),
 
   approvalDecision: (requestId: string, decision: "allow" | "deny") =>
     call<void>("approval_decision", { requestId, decision }),
@@ -104,6 +105,11 @@ export const Bridge = {
   providerOauthFinish: (id: string, pasted: string) =>
     callOrThrow<void>("provider_oauth_finish", { id, pasted }),
   providerDisconnect: (id: string) => callOrThrow<void>("provider_disconnect", { id }),
+  /**
+   * A real API call: resolves the credential, lists the live models, and says
+   * whether the provider answered. Doubles as the dynamic models fetch.
+   */
+  providerProbe: (id: string) => call<ProbeResult>("provider_probe", { id }),
 
   // ── Integrations ──────────────────────────────────────────────────────────
   refreshIntegration: (id: string) => call<void>("refresh_integration", { id }),
@@ -133,6 +139,14 @@ export interface DroppedFile {
 
 export interface HookStatus {
   installed: boolean;
+  /** The CLI this panel manages ("Claude Code", "Codex CLI", "Gemini CLI"). */
+  cli: string;
+  /** False when neither the config dir nor the binary can be found. */
+  cliDetected: boolean;
+  /** Extra instruction — e.g. Codex's `/hooks` trust review. */
+  note: string | null;
+  /** Events this CLI supports, for the panel's event list. */
+  events: string[];
   settingsPath: string;
   hookPath: string;
   hookReady: boolean;
@@ -154,6 +168,19 @@ export interface ProviderInfo {
   keyPlaceholder: string;
   /** True for the OpenAI-compatible provider that needs a base URL. */
   custom: boolean;
+  /** The provider's CLI has a hook surface we can install into. */
+  hooksSupported: boolean;
+  cliName: string | null;
+  hooksNote: string | null;
+}
+
+/** What `provider_probe` reports after one real API call. */
+export interface ProbeResult {
+  /** "none" | "connected" | "failed" | "unverified" — see providers::probe. */
+  state: string;
+  error: string | null;
+  /** Live models when the probe succeeded; bundled defaults otherwise. */
+  models: string[];
 }
 
 export interface OauthBegin {

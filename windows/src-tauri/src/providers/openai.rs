@@ -10,6 +10,9 @@ use super::{Credential, OAuthTokens, Part, ProviderSpec, Role, Turn, SYSTEM_PROM
 const MAX_TOKENS: u32 = 4096;
 /// Codex's subscription path — the same backend the official Codex CLI hits.
 const CODEX_RESPONSES: &str = "https://chatgpt.com/backend-api/codex/responses";
+/// Codex's own models list — subscription tokens are scoped to the ChatGPT
+/// backend, not api.openai.com.
+const CODEX_MODELS: &str = "https://chatgpt.com/backend-api/codex/models";
 
 /// Parts of a turn in chat/completions shape. Binary files only work as
 /// images (data URIs); a PDF degrades to a plain-text note.
@@ -163,11 +166,7 @@ async fn send_codex_responses(
         .header("originator", "codex_cli_rs")
         .header("accept", "text/event-stream")
         .json(&body);
-    if let Some(account) = tokens
-        .id_token
-        .as_deref()
-        .and_then(chatgpt_account_id)
-    {
+    if let Some(account) = tokens.account_id.as_deref() {
         request = request.header("chatgpt-account-id", account);
     }
 
@@ -219,7 +218,8 @@ fn parse_responses_sse(body: &str) -> Result<String, String> {
 
 /// `chatgpt_account_id` lives inside the id_token JWT payload — read it
 /// without verifying (it's our own stored token, not an authentication check).
-fn chatgpt_account_id(id_token: &str) -> Option<String> {
+/// `pub(crate)` so oauth.rs can lift the claim before dropping the JWT.
+pub(crate) fn chatgpt_account_id(id_token: &str) -> Option<String> {
     let payload = id_token.split('.').nth(1)?;
     let bytes = decode_base64url(payload)?;
     let json: Value = serde_json::from_slice(&bytes).ok()?;
@@ -233,6 +233,70 @@ fn chatgpt_account_id(id_token: &str) -> Option<String> {
 fn decode_base64url(input: &str) -> Option<Vec<u8>> {
     use base64::Engine;
     base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(input).ok()
+}
+
+/// `GET {base}/models` for OpenAI-compatible endpoints; Codex OAuth goes to the
+/// ChatGPT backend instead, where subscription tokens are actually valid.
+pub async fn list_models(
+    spec: &ProviderSpec,
+    credential: &Credential,
+) -> Result<Vec<String>, String> {
+    let client = http_client()?;
+    if spec.id == "codex" {
+        if let Credential::OAuth(tokens) = credential {
+            let mut request = client
+                .get(CODEX_MODELS)
+                .bearer_auth(&tokens.access_token)
+                .header("originator", "codex_cli_rs");
+            if let Some(account) = tokens.account_id.as_deref() {
+                request = request.header("chatgpt-account-id", account);
+            }
+            let body = read_json(request.send().await.map_err(|e| format!("Network error: {e}"))?).await?;
+            // The backend has answered both `models[].slug` and `data[].id`.
+            let models = body
+                .get("models")
+                .or_else(|| body.get("data"))
+                .and_then(Value::as_array)
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|m| {
+                            m.get("slug")
+                                .or_else(|| m.get("id"))
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            return Ok(models);
+        }
+    }
+    let base = spec.base_url.trim_end_matches('/');
+    if base.is_empty() {
+        return Err("Set the provider's base URL in Settings first.".into());
+    }
+    let key = match credential {
+        Credential::ApiKey(k) => k,
+        Credential::OAuth(_) => return Err(format!("{} sign-in isn't supported.", spec.name)),
+    };
+    let body = read_json(
+        client
+            .get(format!("{base}/models"))
+            .bearer_auth(key)
+            .send()
+            .await
+            .map_err(|e| format!("Network error: {e}"))?,
+    )
+    .await?;
+    Ok(body
+        .get("data")
+        .and_then(Value::as_array)
+        .map(|data| {
+            data.iter()
+                .filter_map(|m| m.get("id").and_then(Value::as_str).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 fn http_client() -> Result<reqwest::Client, String> {
@@ -254,7 +318,7 @@ async fn read_json(response: reqwest::Response) -> Result<Value, String> {
                     .map(str::to_string)
             })
             .unwrap_or_else(|| text.chars().take(200).collect());
-        return Err(format!("API {status}: {detail}"));
+        return Err(format!("HTTP {status}: {detail}"));
     }
     serde_json::from_str(&text).map_err(|e| format!("Bad API response: {e}"))
 }

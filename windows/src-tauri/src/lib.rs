@@ -49,7 +49,9 @@ pub struct BootInfo {
 fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
     let mut settings = shared.settings.lock().unwrap().clone();
     // The real state of ~/.claude/settings.json wins over whatever we stored.
-    settings.hooks_installed = hooks::status().installed;
+    settings.hooks_installed = hooks::spec_for("claude")
+        .map(|spec| spec.status().installed)
+        .unwrap_or(false);
     let screen = island::screen_info(&app, &settings.screen);
     BootInfo {
         settings,
@@ -184,17 +186,24 @@ fn set_paused(paused: bool) {
     integrations::set_paused(paused);
 }
 
-// ── Claude Code hooks ─────────────────────────────────────────────────────────
+// ── Provider CLI hooks ────────────────────────────────────────────────────────
+
+/// The CLI spec a provider id maps to; providers without a hookable CLI
+/// (hermes, custom) simply error out — the UI hides their panel anyway.
+fn hooks_spec(provider: &str) -> Result<&'static hooks::CliSpec, String> {
+    hooks::spec_for(provider)
+        .ok_or_else(|| format!("Provider '{provider}' has no hookable CLI."))
+}
 
 #[tauri::command]
-fn hooks_status() -> HookStatus {
-    hooks::status()
+fn hooks_status(provider: String) -> Result<HookStatus, String> {
+    Ok(hooks_spec(&provider)?.status())
 }
 
 /// Returns the diff the user has to look at before anything is written.
 #[tauri::command]
-fn hooks_preview(install: bool) -> Result<HookPreview, String> {
-    hooks::preview(install)
+fn hooks_preview(provider: String, install: bool) -> Result<HookPreview, String> {
+    hooks_spec(&provider)?.preview(install)
 }
 
 /// Only ever called from an explicit click in the settings window.
@@ -202,19 +211,24 @@ fn hooks_preview(install: bool) -> Result<HookPreview, String> {
 fn hooks_apply(
     app: AppHandle,
     shared: State<Shared>,
+    provider: String,
     install: bool,
     fingerprint: String,
 ) -> Result<String, String> {
     // The fingerprint comes from the preview the user actually looked at, so a
-    // settings.json that changed in between is refused rather than overwritten.
-    let backup = hooks::write(install, &fingerprint)?;
-    let updated = {
-        let mut current = shared.settings.lock().unwrap();
-        current.hooks_installed = install;
-        let _ = settings::save(&current);
-        current.clone()
-    };
-    let _ = app.emit("settings-changed", updated);
+    // config that changed in between is refused rather than overwritten.
+    let backup = hooks_spec(&provider)?.write(install, &fingerprint)?;
+    if provider == "claude" {
+        // `settings.hooks_installed` is the island's "any hooks?" hint and has
+        // always meant Claude's file; keep it truthful.
+        let updated = {
+            let mut current = shared.settings.lock().unwrap();
+            current.hooks_installed = install;
+            let _ = settings::save(&current);
+            current.clone()
+        };
+        let _ = app.emit("settings-changed", updated);
+    }
     Ok(backup)
 }
 
@@ -285,6 +299,12 @@ pub struct ProviderInfo {
     key_placeholder: String,
     /// True for the OpenAI-compatible custom provider — needs a base URL field.
     custom: bool,
+    /// The provider's CLI has a hook surface we can install into.
+    hooks_supported: bool,
+    /// That CLI's display name ("Claude Code", "Codex CLI", "Gemini CLI").
+    cli_name: Option<String>,
+    /// Extra instruction shown in the hooks panel (e.g. Codex's trust review).
+    hooks_note: Option<String>,
 }
 
 #[tauri::command]
@@ -312,6 +332,9 @@ fn providers_list(shared: State<Shared>) -> Vec<ProviderInfo> {
             models: spec.models.iter().map(|m| m.to_string()).collect(),
             key_placeholder: spec.key_placeholder.to_string(),
             custom: spec.id == "custom",
+            hooks_supported: hooks::spec_for(spec.id).is_some(),
+            cli_name: hooks::spec_for(spec.id).map(|s| s.cli.to_string()),
+            hooks_note: hooks::spec_for(spec.id).and_then(|s| s.note.map(str::to_string)),
         })
         .collect()
 }
@@ -385,6 +408,15 @@ async fn provider_oauth_finish(
     })?;
     let settings = shared.settings.lock().unwrap().clone();
     providers::oauth::finish_paste(spec, pending, &pasted, &settings).await.map(|_| ())
+}
+
+/// "Is this credential real?" — resolves it, then makes one real API call
+/// (the models listing doubles as the probe) and reports what happened.
+#[tauri::command]
+async fn provider_probe(shared: State<'_, Shared>, id: String) -> Result<providers::ProbeResult, String> {
+    let spec = providers::spec_of(&id);
+    let settings = shared.settings.lock().unwrap().clone();
+    Ok(providers::probe(spec, &settings).await)
 }
 
 /// Sign out / remove every credential kind for a provider.
@@ -567,6 +599,7 @@ pub fn run() {
             provider_oauth_begin,
             provider_oauth_finish,
             provider_disconnect,
+            provider_probe,
             ingest_file,
             secret_present,
             secret_set,

@@ -1,7 +1,7 @@
 ---
 id: T-007
 title: Hooks por provider ativo — seção no card, expande ao conectar
-status: todo
+status: done
 blockedBy: []
 specRef: .specdriven/specs/SPEC-004-provider-hooks.md
 trackerRef: .specdriven/tickets/T-007-provider-hooks.md

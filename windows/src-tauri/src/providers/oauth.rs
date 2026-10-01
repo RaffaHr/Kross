@@ -178,7 +178,7 @@ fn wait_for_code(listener: TcpListener, path: &str, expected_state: &str) -> Res
         let state = params.get("state").cloned();
         match (code, state) {
             (Some(code), Some(state)) if state == expected_state => {
-                respond(&mut reader, 200, "Signed in — you can close this tab and go back to Coucou.");
+                respond(&mut reader, 200, "Code received — Coucou is finishing the sign-in. Check Settings → Providers for the result; you can close this tab.");
                 return Ok(code);
             }
             (Some(_), _) => {
@@ -266,19 +266,31 @@ struct TokenResponse {
     id_token: Option<String>,
 }
 
-fn into_tokens(provider: &ProviderSpec, r: TokenResponse, prior: Option<&OAuthTokens>) -> OAuthTokens {
-    let tokens = OAuthTokens {
+fn into_tokens(
+    provider: &ProviderSpec,
+    r: TokenResponse,
+    prior: Option<&OAuthTokens>,
+) -> Result<OAuthTokens, String> {
+    let mut tokens = OAuthTokens {
         access_token: r.access_token,
         refresh_token: r.refresh_token.or_else(|| prior.and_then(|t| t.refresh_token.clone())),
         expires_at: r.expires_in.map(|secs| unix_now() + secs),
         id_token: r.id_token.or_else(|| prior.and_then(|t| t.id_token.clone())),
+        account_id: prior.and_then(|t| t.account_id.clone()),
     };
-    if let Ok(raw) = serde_json::to_string(&tokens) {
-        if let Err(err) = crate::secrets::set(&super::oauth_secret(provider.id), &raw) {
-            eprintln!("[coucou] could not store {} tokens: {err}", provider.id);
+    if provider.id == "codex" {
+        // The id_token only exists to carry `chatgpt_account_id` — once that
+        // claim is lifted, keeping the JWT would push the stored bundle past
+        // the Credential Manager blob limit (~2560 bytes).
+        if let Some(id) = tokens.id_token.as_deref().and_then(crate::providers::openai::chatgpt_account_id) {
+            tokens.account_id = Some(id);
         }
+        tokens.id_token = None;
     }
-    tokens
+    let raw = serde_json::to_string(&tokens).map_err(|e| e.to_string())?;
+    crate::secrets::set(&super::oauth_secret(provider.id), &raw)
+        .map_err(|e| format!("Couldn't store the {} sign-in: {e}", provider.name))?;
+    Ok(tokens)
 }
 
 /// Resolves the OAuth client registration for `spec`: the baked-in public
@@ -383,13 +395,12 @@ pub async fn exchange(
         ("code", code.to_string()),
         ("redirect_uri", pending.redirect_uri.clone()),
         ("code_verifier", pending.verifier.clone()),
-        ("state", pending.state.clone()),
     ];
     if let Some(secret) = secret {
         form.push(("client_secret", secret));
     }
     let parsed: TokenResponse = token_post(oauth.token_url, form.as_slice()).await?;
-    Ok(into_tokens(spec, parsed, None))
+    into_tokens(spec, parsed, None)
 }
 
 /// Returns a usable token set: the stored one when fresh, a refresh grant
@@ -421,7 +432,7 @@ pub async fn ensure_fresh(
     let parsed: TokenResponse = token_post(oauth.token_url, form.as_slice())
         .await
         .map_err(|_| format!("{} sign-in expired — sign in again in Settings.", spec.name))?;
-    Ok(into_tokens(spec, parsed, Some(&tokens)))
+    into_tokens(spec, parsed, Some(&tokens))
 }
 
 async fn token_post(url: &str, form: &[(&str, String)]) -> Result<TokenResponse, String> {
@@ -544,6 +555,7 @@ mod tests {
             refresh_token: None,
             expires_at: Some(unix_now() + 3600),
             id_token: None,
+            account_id: None,
         };
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -560,6 +572,7 @@ mod tests {
             refresh_token: None,
             expires_at: Some(past),
             id_token: None,
+            account_id: None,
         };
         assert!(rt
             .block_on(ensure_fresh(super::super::spec_of("google"), stale, &settings))

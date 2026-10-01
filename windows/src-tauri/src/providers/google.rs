@@ -95,6 +95,42 @@ pub async fn send(
     Ok(Turn { role: Role::Assistant, parts: vec![Part::Text(text)] })
 }
 
+/// `GET {base}/models` — the cloud-platform scope on our OAuth token covers it,
+/// and an API key works too, so this doubles as the connectivity probe.
+pub async fn list_models(credential: &Credential) -> Result<Vec<String>, String> {
+    let base = super::spec_of("google").base_url.trim_end_matches('/');
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let request = client.get(format!("{base}/models"));
+    let request = match credential {
+        Credential::ApiKey(key) => request.header("x-goog-api-key", key),
+        Credential::OAuth(tokens) => request.bearer_auth(&tokens.access_token),
+    };
+    let response = request.send().await.map_err(|e| format!("Network error: {e}"))?;
+    let status = response.status();
+    let text = response.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("HTTP {status}: {}", text.chars().take(200).collect::<String>()));
+    }
+    let body: Value = serde_json::from_str(&text).map_err(|e| format!("Bad models response: {e}"))?;
+    Ok(body
+        .get("models")
+        .and_then(Value::as_array)
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(|m| {
+                    m.get("name")
+                        .and_then(Value::as_str)
+                        .map(|n| n.strip_prefix("models/").unwrap_or(n).to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

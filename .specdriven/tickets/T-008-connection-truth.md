@@ -1,7 +1,7 @@
 ---
 id: T-008
 title: Verdade de conexão — callback neutro, erro de exchange visível, connected = probe real
-status: todo
+status: done
 blockedBy: []
 specRef: .specdriven/specs/SPEC-005-connection-truth.md
 trackerRef: .specdriven/tickets/T-008-connection-truth.md

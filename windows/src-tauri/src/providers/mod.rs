@@ -231,7 +231,13 @@ pub struct OAuthTokens {
     /// Unix seconds when `access_token` stops working; None = unknown.
     #[serde(default)]
     pub expires_at: Option<i64>,
-    /// Codex keeps `chatgpt_account_id` inside the id_token JWT — retained.
+    /// Codex's `chatgpt_account_id` claim — pulled out of the id_token at
+    /// exchange time so the bulky JWT never has to persist (Windows Credential
+    /// Manager blobs cap at ~2560 bytes and a Codex bundle overflows that).
+    #[serde(default)]
+    pub account_id: Option<String>,
+    /// Retained for flows that need it; Codex drops it after extracting
+    /// `account_id`.
     #[serde(default)]
     pub id_token: Option<String>,
 }
@@ -285,6 +291,57 @@ pub fn connected(spec: &ProviderSpec) -> bool {
     secrets::present(&oauth_secret(spec.id))
         || secrets::present(&key_secret(spec.id))
         || (spec.id == "claude" && secrets::present("anthropic-api-key"))
+}
+
+// ── Live probe: "connected" means the API actually answers ───────────────────
+
+/// What a `provider_probe` call reports. `state` is one of:
+/// `none` (no credential), `connected` (API answered), `failed` (the API or the
+/// credential store rejected it — show the error), `unverified` (credential
+/// exists but the listing endpoint can't tell — e.g. custom without /models).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeResult {
+    pub state: &'static str,
+    pub error: Option<String>,
+    /// Live model list when the probe succeeded; bundled defaults otherwise.
+    pub models: Vec<String>,
+}
+
+async fn dispatch_models(spec: &ProviderSpec, credential: &Credential) -> Result<Vec<String>, String> {
+    match spec.id {
+        "claude" => anthropic::list_models(credential).await,
+        "google" => google::list_models(credential).await,
+        _ => openai::list_models(spec, credential).await,
+    }
+}
+
+/// Presence + a real call: the probe doubles as the dynamic models fetch so a
+/// single request serves both the status dot and the dropdown.
+pub async fn probe(spec: &'static ProviderSpec, settings: &Settings) -> ProbeResult {
+    let defaults: Vec<String> = spec.models.iter().map(|m| m.to_string()).collect();
+    let credential = match resolve_credential(spec, settings).await {
+        Ok(c) => c,
+        Err(err) => {
+            return ProbeResult { state: "none", error: Some(err), models: defaults };
+        }
+    };
+    match dispatch_models(spec, &credential).await {
+        Ok(models) if !models.is_empty() => {
+            ProbeResult { state: "connected", error: None, models }
+        }
+        Ok(_) => ProbeResult { state: "connected", error: None, models: defaults },
+        Err(err) => {
+            // Auth rejections are real negatives; anything else just means the
+            // listing endpoint can't confirm — the credential may still chat.
+            let rejected = err.starts_with("HTTP 401") || err.starts_with("HTTP 403");
+            ProbeResult {
+                state: if rejected { "failed" } else { "unverified" },
+                error: Some(err),
+                models: defaults,
+            }
+        }
+    }
 }
 
 // ── Registry ─────────────────────────────────────────────────────────────────
