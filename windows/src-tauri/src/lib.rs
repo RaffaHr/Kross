@@ -385,6 +385,11 @@ fn provider_oauth_begin(
                 }
                 Err(err) => Err(err),
             };
+            // The settings window may not be listening; the log is the record.
+            match &outcome {
+                Ok(()) => log::line(format!("oauth {} sign-in completed", spec.id)),
+                Err(err) => log::line(format!("oauth {} sign-in failed: {err}", spec.id)),
+            }
             let _ = app.emit(
                 "provider-oauth-complete",
                 serde_json::json!({ "id": spec.id, "ok": outcome.is_ok(), "error": outcome.err() }),
@@ -416,7 +421,11 @@ async fn provider_oauth_finish(
 async fn provider_probe(shared: State<'_, Shared>, id: String) -> Result<providers::ProbeResult, String> {
     let spec = providers::spec_of(&id);
     let settings = shared.settings.lock().unwrap().clone();
-    Ok(providers::probe(spec, &settings).await)
+    let result = providers::probe(spec, &settings).await;
+    if let Some(err) = &result.error {
+        log::line(format!("probe {} → {}: {err}", id, result.state));
+    }
+    Ok(result)
 }
 
 /// Sign out / remove every credential kind for a provider.

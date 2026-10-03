@@ -13,6 +13,13 @@ const CODEX_RESPONSES: &str = "https://chatgpt.com/backend-api/codex/responses";
 /// Codex's own models list — subscription tokens are scoped to the ChatGPT
 /// backend, not api.openai.com.
 const CODEX_MODELS: &str = "https://chatgpt.com/backend-api/codex/models";
+/// The backend filters /models by each model's `minimal_client_version` —
+/// sending Coucou's own version (0.1.x) makes every gated model disappear,
+/// which is exactly the "empty list → fallback" bug this constant prevents.
+/// Report the highest gate in Codex's published model manifest
+/// (codex-rs/models-manager/models.json); bump it when newer gated models
+/// stop appearing.
+const CODEX_CLIENT_VERSION: &str = "0.155.0";
 
 /// Parts of a turn in chat/completions shape. Binary files only work as
 /// images (data URIs); a PDF degrades to a plain-text note.
@@ -246,29 +253,14 @@ pub async fn list_models(
         if let Credential::OAuth(tokens) = credential {
             let mut request = client
                 .get(CODEX_MODELS)
+                .query(&[("client_version", CODEX_CLIENT_VERSION)])
                 .bearer_auth(&tokens.access_token)
                 .header("originator", "codex_cli_rs");
             if let Some(account) = tokens.account_id.as_deref() {
                 request = request.header("chatgpt-account-id", account);
             }
             let body = read_json(request.send().await.map_err(|e| format!("Network error: {e}"))?).await?;
-            // The backend has answered both `models[].slug` and `data[].id`.
-            let models = body
-                .get("models")
-                .or_else(|| body.get("data"))
-                .and_then(Value::as_array)
-                .map(|list| {
-                    list.iter()
-                        .filter_map(|m| {
-                            m.get("slug")
-                                .or_else(|| m.get("id"))
-                                .and_then(Value::as_str)
-                                .map(str::to_string)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            return Ok(models);
+            return Ok(parse_codex_models(&body));
         }
     }
     let base = spec.base_url.trim_end_matches('/');
@@ -297,6 +289,43 @@ pub async fn list_models(
                 .collect()
         })
         .unwrap_or_default())
+}
+
+/// The ChatGPT catalog returns internal entries next to the real picker list:
+/// `visibility:"hide"` marks non-selectable tools (codex-auto-review,
+/// daybreak-*), `supported_in_api:false` marks entries the Responses backend
+/// won't serve, and `priority` is the server's own ordering. Offer only what
+/// can actually answer a request — picking a hidden/internal slug is the
+/// "model not available" failure the user hits.
+fn parse_codex_models(body: &Value) -> Vec<String> {
+    let list = body
+        .get("models")
+        .or_else(|| body.get("data"))
+        .and_then(Value::as_array);
+    let Some(list) = list else { return Vec::new() };
+    let mut usable: Vec<(i64, String)> = list
+        .iter()
+        .filter(|m| {
+            m.get("visibility")
+                .and_then(Value::as_str)
+                .map_or(true, |v| v == "list")
+        })
+        .filter(|m| {
+            m.get("supported_in_api")
+                .and_then(Value::as_bool)
+                .map_or(true, |b| b)
+        })
+        .filter_map(|m| {
+            let slug = m
+                .get("slug")
+                .or_else(|| m.get("id"))
+                .and_then(Value::as_str)?;
+            let priority = m.get("priority").and_then(Value::as_i64).unwrap_or(i64::MAX);
+            Some((priority, slug.to_string()))
+        })
+        .collect();
+    usable.sort_by_key(|(priority, _)| *priority);
+    usable.into_iter().map(|(_, slug)| slug).collect()
 }
 
 fn http_client() -> Result<reqwest::Client, String> {
@@ -376,6 +405,26 @@ mod tests {
         let sse = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n";
         assert_eq!(parse_responses_sse(sse).unwrap(), "Hi");
         assert!(parse_responses_sse("data: {}\n").is_err());
+    }
+
+    #[test]
+    fn codex_models_keep_only_selectable_slugs_in_priority_order() {
+        // Shape mirrors chatgpt.com/backend-api/codex/models.
+        let body = json!({
+            "models": [
+                { "slug": "codex-auto-review", "visibility": "hide",
+                  "supported_in_api": true, "priority": 43 },
+                { "slug": "gpt-5.5", "visibility": "list",
+                  "supported_in_api": true, "priority": 13 },
+                { "slug": "gpt-6.1-sol", "visibility": "list",
+                  "supported_in_api": true, "priority": 1 },
+                { "slug": "gpt-legacy", "visibility": "list",
+                  "supported_in_api": false, "priority": 2 }
+            ]
+        });
+        assert_eq!(parse_codex_models(&body), ["gpt-6.1-sol", "gpt-5.5"]);
+        // Entries without the new fields stay usable (older API shape).
+        assert_eq!(parse_codex_models(&json!({ "data": [{ "id": "a" }] })), ["a"]);
     }
 
     #[test]

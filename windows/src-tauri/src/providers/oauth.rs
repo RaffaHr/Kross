@@ -81,7 +81,9 @@ pub fn begin(spec: &'static ProviderSpec, settings: &Settings) -> Result<Started
     match oauth.callback_path {
         Some(path) => {
             let (listener, port) = bind_listener(oauth.callback_port)?;
-            let redirect_uri = format!("http://localhost:{port}{path}");
+            // 127.0.0.1, not "localhost": Codex registers the IP literal, and
+            // Google accepts loopback IPs interchangeably for installed apps.
+            let redirect_uri = format!("http://127.0.0.1:{port}{path}");
             let url = authorize_url(oauth, &redirect_uri, &challenge, &state, &client_id);
             let expected_state = state.clone();
             let (tx, rx) = mpsc::channel();
@@ -387,7 +389,6 @@ pub async fn exchange(
     code: &str,
     settings: &Settings,
 ) -> Result<OAuthTokens, String> {
-    let oauth = spec.oauth.as_ref().expect("oauth spec");
     let (client_id, secret) = client_credentials(spec, settings)?;
     let mut form = vec![
         ("grant_type", "authorization_code".to_string()),
@@ -399,7 +400,7 @@ pub async fn exchange(
     if let Some(secret) = secret {
         form.push(("client_secret", secret));
     }
-    let parsed: TokenResponse = token_post(oauth.token_url, form.as_slice()).await?;
+    let parsed: TokenResponse = token_post(spec, form.as_slice()).await?;
     into_tokens(spec, parsed, None)
 }
 
@@ -419,7 +420,6 @@ pub async fn ensure_fresh(
     let Some(refresh) = tokens.refresh_token.clone() else {
         return Err(format!("{} sign-in expired — sign in again in Settings.", spec.name));
     };
-    let oauth = spec.oauth.as_ref().expect("oauth spec");
     let (client_id, secret) = client_credentials(spec, settings)?;
     let mut form = vec![
         ("grant_type", "refresh_token".to_string()),
@@ -429,20 +429,24 @@ pub async fn ensure_fresh(
     if let Some(secret) = secret {
         form.push(("client_secret", secret));
     }
-    let parsed: TokenResponse = token_post(oauth.token_url, form.as_slice())
+    let parsed: TokenResponse = token_post(spec, form.as_slice())
         .await
         .map_err(|_| format!("{} sign-in expired — sign in again in Settings.", spec.name))?;
     into_tokens(spec, parsed, Some(&tokens))
 }
 
-async fn token_post(url: &str, form: &[(&str, String)]) -> Result<TokenResponse, String> {
+async fn token_post(spec: &ProviderSpec, form: &[(&str, String)]) -> Result<TokenResponse, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
-    let response = client
-        .post(url)
-        .form(form)
+    let mut request = client.post(spec.oauth.as_ref().unwrap().token_url).form(form);
+    if spec.id == "codex" {
+        // codex-rs's default http client stamps every auth call with this —
+        // the ChatGPT backend routes on it.
+        request = request.header("originator", "codex_cli_rs");
+    }
+    let response = request
         .send()
         .await
         .map_err(|e| format!("Sign-in exchange failed: {e}"))?;
@@ -458,6 +462,7 @@ async fn token_post(url: &str, form: &[(&str, String)]) -> Result<TokenResponse,
                     .map(str::to_string)
             })
             .unwrap_or_else(|| text.chars().take(200).collect());
+        crate::log::line(format!("oauth {} exchange rejected ({status}): {detail}", spec.id));
         return Err(format!("Sign-in exchange failed ({status}): {detail}"));
     }
     serde_json::from_str(&text).map_err(|e| format!("Bad sign-in response: {e}"))

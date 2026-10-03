@@ -399,7 +399,10 @@ const CLAUDE_OAUTH: OAuthSpec = OAuthSpec {
     extra_params: &[("code", "true")],
 };
 
-/// Codex CLI's client — redirect is pinned to localhost:1455/auth/callback.
+/// Codex CLI's client — redirect is pinned to 127.0.0.1:1455/auth/callback
+/// (the exact URI codex-rs registers, IP literal not `localhost`). The
+/// `originator` param and the connectors scopes are also codex-rs's: without
+/// them the issued token lacks what the ChatGPT backend expects.
 const CODEX_OAUTH: OAuthSpec = OAuthSpec {
     authorize_url: "https://auth.openai.com/oauth/authorize",
     token_url: "https://auth.openai.com/oauth/token",
@@ -407,10 +410,21 @@ const CODEX_OAUTH: OAuthSpec = OAuthSpec {
     client_secret: "",
     client_id_env: "",
     client_secret_env: "",
-    scopes: &["openid", "profile", "email", "offline_access"],
+    scopes: &[
+        "openid",
+        "profile",
+        "email",
+        "offline_access",
+        "api.connectors.read",
+        "api.connectors.invoke",
+    ],
     callback_path: Some("/auth/callback"),
     callback_port: 1455,
-    extra_params: &[("codex_cli_simplified_flow", "true"), ("id_token_add_organizations", "true")],
+    extra_params: &[
+        ("codex_cli_simplified_flow", "true"),
+        ("id_token_add_organizations", "true"),
+        ("originator", "codex_cli_rs"),
+    ],
 };
 
 /// Google's installed-app OAuth registration is a public id/secret pair —
